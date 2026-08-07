@@ -98,13 +98,6 @@ Norte). Análises complementares restritas a regiões específicas (ex.: Améric
 do Sul, África) poderão ser conduzidas posteriormente como recortes do dataset
 completo, sem necessidade de nova curadoria.
 
-A definição de uma categoria "Sul Global" foi **adiada** deliberadamente, dado
-que não existe consenso único sobre quais países a compõem (definições da ONU,
-UNCTAD, Banco Mundial e da literatura de Relações Internacionais divergem,
-especialmente para casos como China, Rússia, Coreia do Sul e Taiwan). Essa
-classificação será definida e aplicada em uma etapa posterior e específica da
-análise, com critério explicitado separadamente.
-
 **Resultado, após remoção de MAGs (n = 1634): 1174 genomas com continente
 identificado (71,8%).**
 
@@ -153,7 +146,7 @@ nodulantes. Esses casos provavelmente correspondem a estudos de colonização
 endofítica/rizosférica não simbiótica, fenômeno já descrito na literatura para
 alguns isolados de *Bradyrhizobium*, e não a erro de anotação.
 
-## 7. Classificação taxonômica fina (delimitação por clado monofilético)
+## 7. Classificação taxonômica (delimitação por clado monofilético)
 
 **Abordagem revisada.** A atribuição de cada genoma a um dos grupos
 taxonômicos de interesse (*B. japonicum*, *B. elkanii*, *B. iriomotense*)
@@ -283,7 +276,7 @@ espécie por Delamuta et al. (2013) com base em evidência poligênica — ou
 seja, a separação entre as duas já era reconhecida como filogeneticamente não
 trivial antes mesmo da era genômica.
 
-### 7.7 Soluções possíveis (a decidir com orientação do supervisor)
+### 7.7 Soluções possíveis (Pendente)
 
 1. **Manter a delimitação atual e documentar a limitação.** Os resultados
    reportados nas seções 7.4–7.6 são usados como estão, com a ressalva
@@ -307,7 +300,7 @@ trivial antes mesmo da era genômica.
    esforço intermediário: não exige nova filogenia, apenas uma nova rodada de
    delimitação usando *diazoefficiens* como uma quarta âncora independente.
 
-**Status:** decisão pendente de orientação do supervisor do projeto.
+
 
 ## 8. Convenção de nomenclatura (português → inglês)
 
@@ -342,8 +335,7 @@ anteriores deste documento:
 | — dos quais com continente identificado | 1174 (71,8%) |
 | — dos quais com gênero de hospedeiro identificado | 722 (44,2%) |
 
-## 10. Arquivos gerados nesta etapa
-
+## 10. Arquivos gerados
 - `bradyrhizobium_genomes.jsonl` — resumo bruto de todos os assemblies (NCBI)
 - `bradyrhizobium_diagnostico.tsv` — tabela com metadados de qualidade,
   hospedeiro, localização e nível de montagem
