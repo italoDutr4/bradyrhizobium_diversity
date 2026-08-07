@@ -397,6 +397,4 @@ anteriores deste documento:
   habitats. *ISME Communications*, 6(1), ycag007.
 
 ---
-*Documento gerado como registro do processo de curadoria — atualizar conforme
-o projeto avançar para a delimitação final dos clados monofiléticos e para a
-análise estatística.*
+
