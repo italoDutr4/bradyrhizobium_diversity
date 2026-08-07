@@ -1,9 +1,7 @@
 # Curadoria de dados genômicos de *Bradyrhizobium* — Registro metodológico
 
 Este documento resume as decisões tomadas durante a etapa de obtenção e curadoria
-de metadados dos genomas de *Bradyrhizobium* utilizados neste projeto. O objetivo
-é registrar critérios e justificativas para consulta futura e para a redação da
-seção de Métodos do trabalho.
+de metadados dos genomas de *Bradyrhizobium* utilizados neste projeto. 
 
 ## 1. Fonte dos dados
 
