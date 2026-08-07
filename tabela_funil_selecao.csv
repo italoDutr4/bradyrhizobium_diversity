@@ -1,0 +1,6 @@
+etapa;n_genomas
+Total de genomas no NCBI (bruto);4047
+Apos remover duplicatas GCF/GCA;2199
+Apos filtro de qualidade (completude >=90%, contaminacao <5%);1727
+Com pais identificado;1701
+Com hospedeiro identificado;1494
