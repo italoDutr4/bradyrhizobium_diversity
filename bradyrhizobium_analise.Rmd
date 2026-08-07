@@ -1,0 +1,490 @@
+---
+title: "*Bradyrhizobium* diversity: curation, phylogeny and ecological distribution"
+author: "Italo Dutra"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = TRUE, message = FALSE)
+
+library(tidyverse)
+library(janitor)
+library(countrycode)
+library(readxl)
+library(writexl)
+```
+
+# Introduction and objective
+
+This document records, in a reproducible way, the process of obtaining,
+curating and analyzing *Bradyrhizobium* genomes deposited in NCBI, aiming to
+assess:
+
+1. geographic distribution (by continent) of genomes;
+2. distribution by plant host genus;
+3. distribution by taxonomic group within the genus (*B. japonicum*,
+   *B. elkanii*, *B. diazoefficiens*).
+
+The general methodology follows the logic described in Sobol et al. (2026,
+*ISME Communications*, ycag007), with adaptations described throughout the
+text — mainly in how genomes are selected (a dedicated catalog built via NCBI
+Datasets CLI, instead of subsampling a pre-existing reference phylogeny) and
+in how the phylogeny is built (from core genes, instead of functional
+annotation over an already-established tree).
+
+**Naming convention:** fields produced directly by NCBI's `dataformat` output
+are kept as-is (already in English, e.g. `assembly_accession`,
+`check_m_completeness`). Fields derived by us during curation (country,
+continent, host genus, taxonomic group, etc.) are named in English from this
+version of the document onward, to facilitate sharing this repository.
+
+Bash code chunks document commands executed in the terminal (WSL/Ubuntu) and
+are marked `eval=FALSE` (shown for documentation, not re-executed when
+rendering, to avoid triggering large downloads every time). R chunks are
+executed for real when rendering, reproducing the tables and numbers shown.
+
+---
+
+# Step 1 — Obtaining the genome list (NCBI)
+
+```{bash, eval=FALSE}
+conda create -n bradyrhizobium -c conda-forge -c bioconda \
+  ncbi-datasets-cli entrez-direct -y
+conda activate bradyrhizobium
+```
+
+```{bash, eval=FALSE}
+datasets summary genome taxon "Bradyrhizobium" --as-json-lines \
+  > bradyrhizobium_genomes.jsonl
+
+wc -l bradyrhizobium_genomes.jsonl
+# result: 4047 raw records
+```
+
+```{bash, eval=FALSE}
+dataformat tsv genome --inputfile bradyrhizobium_genomes.jsonl \
+  --fields accession,assminfo-level,assminfo-atypicalis-atypical,\
+source_database,checkm-completeness,checkm-contamination,\
+assminfo-biosample-host,assminfo-biosample-geo-loc-name,\
+assminfo-biosample-isolation-source,assminfo-biosample-lat-lon,\
+organism-name \
+  > bradyrhizobium_diagnostico.tsv
+```
+
+---
+
+# Step 2 — Reading, deduplication and quality filter
+
+```{r}
+genomes_raw <- read_tsv("bradyrhizobium_diagnostico.tsv", show_col_types = FALSE) |>
+  clean_names()
+
+names(genomes_raw)
+```
+
+## Removing GenBank/RefSeq duplicates
+
+NCBI frequently deposits the same physical genome twice (once under GenBank,
+prefix `GCA_`, and once under RefSeq, prefix `GCF_`, sharing the same base
+accession number). We keep a single entry per physical genome, prioritizing
+the RefSeq version when available.
+
+```{r}
+genomes_raw <- genomes_raw |>
+  mutate(
+    accession_number = str_remove(assembly_accession, "^GC[AF]_"),
+    db_prefix        = str_sub(assembly_accession, 1, 3)
+  )
+
+genomes_dedup <- genomes_raw |>
+  group_by(accession_number) |>
+  arrange(desc(db_prefix == "GCF"), .by_group = TRUE) |>
+  slice(1) |>
+  ungroup()
+
+nrow(genomes_raw)
+nrow(genomes_dedup)
+```
+
+## Genomic quality filter
+
+Criterion: completeness >=90% and contamination <5% (Bowers et al. 2017;
+same criterion used in Sobol et al. 2026).
+
+```{r}
+genomes_curated <- genomes_dedup |>
+  filter(check_m_completeness >= 90, check_m_contamination < 5)
+
+nrow(genomes_curated)
+
+genomes_curated |> count(assembly_level, sort = TRUE)
+```
+
+---
+
+# Step 3 — Geographic standardization (country -> continent)
+
+```{r}
+genomes_curated <- genomes_curated |>
+  mutate(
+    country = str_trim(str_extract(assembly_bio_sample_geographic_location, "^[^:]+")),
+    country_clean = case_when(
+      country %in% c("missing", "Missing", "not applicable", "not provided",
+                      "not recorded", "-", "None") ~ NA_character_,
+      TRUE ~ country
+    ),
+    continent = countrycode(country_clean, origin = "country.name", destination = "continent"),
+    continent = case_when(
+      country_clean %in% c("Arctic Ocean", "Antarctica") ~ "Not applicable (environmental source)",
+      TRUE ~ continent
+    )
+  )
+
+genomes_curated |> count(continent, sort = TRUE)
+```
+
+**Decision:** the initial geographic analysis is conducted at the broad
+continent level (Americas, Africa, Asia, Europe, Oceania). Sub-regional cuts
+(e.g. South America, Africa specifically) or a "Global South" grouping — for
+which no single consensus definition exists in the literature — are deferred
+to a separate, later analysis with an explicitly stated criterion.
+
+---
+
+# Step 4 — Host standardization
+
+```{r}
+hosts_unique <- genomes_curated |> count(assembly_bio_sample_host, sort = TRUE)
+```
+
+```{r}
+genomes_curated <- genomes_curated |>
+  mutate(
+    host_clean = assembly_bio_sample_host,
+    host_clean = str_remove(host_clean, "\\(L\\.\\)\\s*Merr(ill)?\\.?"),
+    host_clean = str_remove(host_clean, "\\(Sw\\.\\)\\s*Willd\\.?"),
+    host_clean = str_remove(host_clean, "\\bcv\\.\\s*[A-Za-z ]+"),
+    host_clean = str_remove(host_clean, "\\bcultivar\\s+[A-Za-z0-9]+"),
+    host_clean = str_remove(host_clean, "\\bsubsp\\.\\s*[A-Za-z]+"),
+    host_clean = str_remove(host_clean, "\\bvar\\.\\s*[A-Za-z]+"),
+    host_clean = str_remove(host_clean, "\\bBenth\\.?"),
+    host_clean = str_remove(host_clean, "\\bCol-0\\b"),
+    host_clean = str_remove(host_clean, "Golden Promise"),
+    host_clean = str_remove(host_clean, "\\(pigeon pea\\)"),
+    host_clean = str_remove(host_clean, "\\s+[A-Z][0-9]+$"),
+    host_clean = str_trim(host_clean),
+    host_clean = str_replace(host_clean, "^Glicyne", "Glycine"),
+    host_clean = str_replace(host_clean, "^Desmonium", "Desmodium"),
+    host_clean = str_replace(host_clean, "^Glycine hispida$", "Glycine max"),
+    host_clean = if_else(
+      host_clean %in% c("not applicable", "missing", "-", "None", "not provided",
+                         "not recorded", "Not determined", "Plant", "legume",
+                         "forest legume species") | is.na(host_clean),
+      NA_character_, host_clean
+    )
+  )
+
+genomes_curated <- genomes_curated |>
+  mutate(
+    host_genus = case_when(
+      is.na(host_clean) ~ NA_character_,
+      host_clean == "Homo sapiens" ~ "ANOMALY_review",
+      host_clean == "Sus scrofa" ~ "ANOMALY_review",
+      host_clean == "Subsurface shale" ~ "Non_plant_source",
+      str_detect(host_clean, ";") ~ "MULTIPLE_review",
+      str_detect(host_clean, regex("^soybean", ignore_case = TRUE)) ~ "Glycine",
+      str_detect(host_clean, regex("^(forage )?peanut", ignore_case = TRUE)) ~ "Arachis",
+      str_detect(host_clean, regex("pigeon\\s*pea", ignore_case = TRUE)) ~ "Cajanus",
+      str_detect(host_clean, regex("^rice$", ignore_case = TRUE)) ~ "Oryza",
+      str_detect(host_clean, regex("sweet potato", ignore_case = TRUE)) ~ "Ipomoea",
+      str_detect(host_clean, regex("sugarcane", ignore_case = TRUE)) ~ "Saccharum",
+      TRUE ~ word(host_clean, 1)
+    ),
+    host_genus_final = if_else(
+      host_genus %in% c("ANOMALY_review", "MULTIPLE_review", "Non_plant_source"),
+      NA_character_, host_genus
+    )
+  )
+
+genomes_curated |> count(host_genus_final, sort = TRUE) |> print(n = 70)
+```
+
+**Cases excluded from the host variable** (kept in the overall dataset, see
+`README_curadoria.md` for detailed justification): `Homo sapiens` (n=2),
+`Sus scrofa` (n=1), `Subsurface shale` (n=1), multiple-host field (n=1).
+
+---
+
+# Step 5 — Selection funnel summary
+
+```{r}
+selection_funnel <- tibble(
+  step = c(
+    "Total genomes in NCBI (raw)",
+    "After removing GCF/GCA duplicates",
+    "After quality filter (completeness >=90%, contamination <5%)",
+    "With country identified",
+    "With continent assigned",
+    "With host genus identified"
+  ),
+  n_genomes = c(
+    nrow(genomes_raw),
+    nrow(genomes_dedup),
+    nrow(genomes_curated),
+    sum(!is.na(genomes_curated$country_clean)),
+    sum(!is.na(genomes_curated$continent) & genomes_curated$continent != "Not applicable (environmental source)"),
+    sum(!is.na(genomes_curated$host_genus_final))
+  )
+)
+
+selection_funnel
+```
+
+---
+
+# Step 6 — Exporting results from this phase
+
+```{r, eval=FALSE}
+write_xlsx(genomes_curated, "bradyrhizobium_metadados_curados.xlsx")
+write_xlsx(selection_funnel, "selection_funnel.xlsx")
+
+genomes_curated |>
+  pull(assembly_accession) |>
+  write_lines("accessions_finais.txt")
+```
+
+---
+
+# Step 7 — Disk size estimate (before download)
+
+```{bash, eval=FALSE}
+dataformat tsv genome --inputfile bradyrhizobium_genomes.jsonl \
+  --fields accession,assmstats-total-sequence-len \
+  > tamanhos_genomas.tsv
+```
+
+```{r, eval=FALSE}
+genome_sizes <- read_tsv("tamanhos_genomas.tsv", show_col_types = FALSE) |>
+  clean_names()
+
+selected_sizes <- genomes_curated |>
+  select(assembly_accession) |>
+  left_join(genome_sizes, by = "assembly_accession")
+
+total_gb_nucleotides <- sum(
+  selected_sizes$assembly_stats_total_sequence_length, na.rm = TRUE
+) / 1e9
+
+total_gb_nucleotides  # ~14.74 GB of nucleotides
+```
+
+Estimate: ~14.74 GB of nucleotides + ~30% additional for proteins (~19 GB
+uncompressed); downloaded `.zip` package expected around 5-7 GB.
+
+---
+
+# Step 8 — Downloading selected genomes
+
+```{bash, eval=FALSE}
+tmux new -s download_bradyrhizobium
+conda activate bradyrhizobium
+cd ~/bradyrhizobium_project
+
+datasets download genome accession --inputfile accessions_finais.txt \
+  --include genome,protein,seq-report \
+  --filename bradyrhizobium_genomes.zip
+
+# Ctrl+b, then d, to detach and leave it running in the background
+```
+
+```{bash, eval=FALSE}
+unzip bradyrhizobium_genomes.zip -d bradyrhizobium_genomes/
+
+find bradyrhizobium_genomes/ncbi_dataset/data/ -name "*.fna" | wc -l
+```
+
+**Status: complete.** 1727/1727 genomes downloaded and validated (100%
+integrity check, `valid data package`). Two failed attempts occurred first
+(HTTP/2 stream error; corrupted zip archive) — both resolved by simply
+retrying the download.
+
+---
+
+# Step 9 — Fine-grained taxonomic classification (ANI against type genomes)
+
+## Reference genomes
+
+**Methodological note:** the three target groups are *B. japonicum*,
+*B. elkanii*, and *B. iriomotense* — *B. diazoefficiens* is treated as part of
+the *japonicum* group and therefore not used as a separate reference.
+Accessions below were cross-validated directly against live NCBI data (not
+assumed from external sources): all assemblies deposited under each species
+name were queried, and candidates matching the type-strain identifier were
+compared on assembly level, completeness and contamination. For *japonicum*
+and *elkanii*, two independent sequencing projects exist for the same type
+strain; the Complete-Genome-level assembly was selected over the
+Scaffold-level alternative in both cases.
+
+```{bash, eval=FALSE}
+# Cross-validation query used for each species, e.g.:
+datasets summary genome taxon "Bradyrhizobium elkanii" --as-json-lines | \
+  dataformat tsv genome --fields accession,organism-name,assminfo-biosample-strain,assmstats-total-sequence-len
+
+# Direct quality comparison between candidate accessions for the same strain:
+datasets summary genome accession GCF_023278185.1,GCF_000379145.1 --as-json-lines | \
+  dataformat tsv genome --fields accession,assminfo-level,checkm-completeness,checkm-contamination,assminfo-release-date
+```
+
+| Species | Type strain | Accession | Level | Completeness | Contamination |
+|---|---|---|---|---|---|
+| *Bradyrhizobium japonicum* | USDA 6 | GCF_000284375.1 | Complete Genome | 99.24% | 0.15% |
+| *Bradyrhizobium elkanii* | USDA 76 | GCF_023278185.1 | Complete Genome | 99.4% | 0.42% |
+| *Bradyrhizobium iriomotense* | EK05 (NBRC 102520) | GCF_030160715.1 | Contig | 99.61% | 1.2% |
+
+```{bash, eval=FALSE}
+datasets download genome accession GCF_000284375.1 --include genome --filename japonicum_ref.zip
+datasets download genome accession GCF_023278185.1 --include genome --filename elkanii_ref.zip
+datasets download genome accession GCF_030160715.1 --include genome --filename iriomotense_ref.zip
+
+unzip japonicum_ref.zip -d ref_japonicum/
+unzip elkanii_ref.zip -d ref_elkanii/
+unzip iriomotense_ref.zip -d ref_iriomotense/
+
+find bradyrhizobium_genomes/ncbi_dataset/data/ -name "*.fna" > lista_query_genomas.txt
+find ref_japonicum/ ref_elkanii/ ref_iriomotense/ -name "*.fna" > lista_referencias.txt
+```
+
+## Running FastANI
+
+**Environment note:** FastANI required a dedicated conda environment
+(`fastani_env`), isolated from `bradyrhizobium`, due to a GSL (GNU Scientific
+Library) shared-library version conflict between packages.
+
+```{bash, eval=FALSE}
+mamba create -n fastani_env -c bioconda -c conda-forge fastani -y
+conda activate fastani_env
+
+fastANI --ql lista_query_genomas.txt --rl lista_referencias.txt \
+  -o resultado_ani_bradyrhizobium_v2.tsv --threads 4
+```
+
+**Status:** re-run in progress with the corrected reference set
+(japonicum/elkanii/iriomotense, no diazoefficiens). A first version of this
+comparison (including diazoefficiens as a fourth reference, and an earlier,
+lower-quality elkanii/japonicum accession pair) was run previously; results
+below refer to the corrected `_v2` run.
+
+## Why a 95% ANI threshold for species assignment
+
+The 95-96% ANI threshold used to assign species identity is not an arbitrary
+choice — it is grounded in comparative genomics literature relating whole-
+genome Average Nucleotide Identity to the pre-genomic "gold standard" species
+definition based on DNA-DNA hybridization (DDH):
+
+- **Goris et al. (2007)**, *International Journal of Systematic and
+  Evolutionary Microbiology*, showed that the classical 70% DDH species
+  threshold corresponds empirically to ~95-96% ANI across whole genomes.
+- **Richter & Rosselló-Móra (2009)**, *PNAS*, reinforced ANI as a practical,
+  sequence-based proxy for the prokaryotic species concept.
+- **Jain et al. (2018)**, *Nature Communications* — the paper describing and
+  validating **FastANI itself** — recommends and validates the ~95% ANI cutoff
+  as the species boundary using the FastANI algorithm specifically. This is
+  the most directly applicable reference for this analysis, since we use the
+  same tool the threshold was validated with.
+
+The threshold reflects an empirical discontinuity in the distribution of ANI
+values across large genome collections (few genome pairs fall between ~83%
+and ~95% ANI), rather than an exact mathematical cutoff — different authors
+use values ranging from 94% to 96%, which is a normal source of variation in
+microbial taxonomy, not disagreement about the underlying concept.
+
+```{r, eval=FALSE}
+ani_results <- read_tsv("resultado_ani_bradyrhizobium_v2.tsv",
+                         col_names = c("query", "reference", "ani",
+                                       "mapped_fragments", "total_fragments"),
+                         show_col_types = FALSE)
+
+nrow(ani_results)  # expected: 5181 (1727 genomes x 3 references)
+head(ani_results)
+```
+
+```{r, eval=FALSE}
+ani_results <- ani_results |>
+  mutate(
+    reference_group = case_when(
+      str_detect(reference, "japonicum") ~ "japonicum",
+      str_detect(reference, "elkanii") ~ "elkanii",
+      str_detect(reference, "iriomotense") ~ "iriomotense"
+    )
+  )
+
+best_match <- ani_results |>
+  group_by(query) |>
+  slice_max(ani, n = 1) |>
+  ungroup() |>
+  mutate(
+    taxonomic_group = if_else(ani >= 95, reference_group, "Other_Bradyrhizobium")
+  )
+
+best_match |> count(taxonomic_group, sort = TRUE)
+```
+
+## Gray-zone check (genomes close to the 95% boundary)
+
+Since the exact threshold varies between 94% and 96% depending on the
+reference cited, it is worth checking how many genomes would change
+classification depending on where exactly the cutoff is drawn — this
+quantifies how sensitive the final result is to this specific methodological
+choice.
+
+```{r, eval=FALSE}
+gray_zone <- best_match |>
+  filter(ani >= 94 & ani < 96)
+
+nrow(gray_zone)
+
+gray_zone |> count(reference_group, sort = TRUE)
+```
+
+If `nrow(gray_zone)` is small relative to the total dataset, the threshold
+choice has limited impact on the overall classification and does not need
+extensive sensitivity analysis. If it is large, consider reporting results
+under both a 94% and a 96% cutoff as a robustness check.
+
+---
+
+# Next steps (to document in this same file)
+
+- [x] Confirm complete and intact download of the 1727 genomes
+- [ ] Re-run fine-grained taxonomic classification via ANI with corrected
+      reference set (japonicum/elkanii/iriomotense; diazoefficiens removed)
+- [ ] Core-gene / MLSA extraction for phylogeny construction
+- [ ] Phylogenetic tree construction (PhyloPhlAn or Roary + IQ-TREE)
+- [ ] Generation of the three annotation maps over the phylogeny (continent,
+      host, taxonomic group) via `ggtree`
+- [ ] Phylogenetic signal tests (Pagel's lambda) and complementary statistics
+
+---
+
+# References
+
+- Bowers RM, Kyrpides NC, Stepanauskas R, et al. (2017). Minimum information
+  about a single amplified genome (MISAG) and a metagenome-assembled genome
+  (MIMAG) of bacteria and archaea. *Nature Biotechnology*, 35, 725-731.
+- Goris J, Konstantinidis KT, Klappenbach JA, et al. (2007). DNA-DNA
+  hybridization values and their relationship to whole-genome sequence
+  similarities. *International Journal of Systematic and Evolutionary
+  Microbiology*, 57, 81-91.
+- Jain C, Rodriguez-R LM, Phillippy AM, Konstantinidis KT, Aluru S (2018).
+  High throughput ANI analysis of 90K prokaryotic genomes reveals clear
+  species boundaries. *Nature Communications*, 9, 5114.
+- Richter M, Rosselló-Móra R (2009). Shifting the genomic gold standard for
+  the prokaryotic species definition. *PNAS*, 106(45), 19126-19131.
+- Sobol MS, Klos AS, Ané C, McMahon KD, Kaçar B (2026). Ecological
+  constraints and evolutionary trade-offs shape nitrogen fixation across
+  habitats. *ISME Communications*, 6(1), ycag007.
